@@ -20,7 +20,7 @@ app.get('/download', (req, res) => {
   // yt-dlp: lấy direct URL, không download file về server
   execFile('yt-dlp', [
     '--get-url',
-    '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--format', 'best[ext=mp4][vcodec^=avc]/best[ext=mp4]/best',
     '--no-playlist',
     url
   ], { timeout: 30000 }, (err, stdout, stderr) => {
