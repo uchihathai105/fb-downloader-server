@@ -17,7 +17,7 @@ function isAllowed(url) {
   return url && allowed.some(d => url.includes(d))
 }
 
-function handleDownload(url, secret, res) {
+function handleDownload(url, secret, req, res) {
   if (secret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' })
   if (!isAllowed(url)) return res.status(400).json({ error: 'Invalid URL' })
 
@@ -67,7 +67,7 @@ function handleDownload(url, secret, res) {
   })
 }
 
-app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, res))
-app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, res))
+app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, req, res))
+app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, req, res))
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
