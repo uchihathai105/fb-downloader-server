@@ -18,9 +18,17 @@ function handleDownload(url, secret, res) {
   if (secret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' })
   if (!isAllowed(url)) return res.status(400).json({ error: 'Invalid URL' })
 
+  const fmt = [
+    'best[vcodec^=avc1][acodec^=mp4a][ext=mp4]',
+    'best[vcodec^=avc1][ext=mp4]',
+    'best[vcodec^=avc][ext=mp4]',
+    'best[ext=mp4]',
+    'best'
+  ].join('/')
+
   execFile('yt-dlp', [
     '--get-url',
-    '--format', 'bestvideo[vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc][ext=mp4]/best[ext=mp4]/best',
+    '--format', fmt,
     '--no-playlist',
     '--no-warnings',
     url
@@ -30,12 +38,7 @@ function handleDownload(url, secret, res) {
     const lines = stdout.trim().split('\n').filter(l => l.startsWith('http'))
     if (!lines.length) return res.status(500).json({ error: 'No URL found' })
 
-    // Nếu có 2 URLs (video + audio riêng) → trả cả 2 để app ghép
-    res.json({
-      videoURL: lines[0],
-      audioURL: lines.length > 1 ? lines[1] : null,
-      type: 'video'
-    })
+    res.json({ videoURL: lines[0], type: 'direct' })
   })
 }
 
