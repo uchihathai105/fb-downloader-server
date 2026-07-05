@@ -2,23 +2,23 @@ const express = require('express')
 const { execFile } = require('child_process')
 const app = express()
 
+app.use(express.json())
+
 const PORT = process.env.PORT || 3000
 const API_SECRET = process.env.API_SECRET || 'changeme'
 
 app.get('/health', (_, res) => res.json({ ok: true }))
 
-app.get('/download', (req, res) => {
-  const { url, secret } = req.query
-
+function handleDownload(url, secret, res) {
   if (secret !== API_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
+
   const allowedDomains = ['facebook.com', 'instagram.com', 'fb.watch', 'fb.com', 'tiktok.com', 'vm.tiktok.com']
   if (!url || !allowedDomains.some(d => url.includes(d))) {
     return res.status(400).json({ error: 'Invalid URL' })
   }
 
-  // yt-dlp: lấy direct URL + metadata
   execFile('yt-dlp', [
     '--get-url',
     '--get-thumbnail',
@@ -32,9 +32,6 @@ app.get('/download', (req, res) => {
     }
 
     const lines = stdout.trim().split('\n').filter(Boolean)
-
-    // yt-dlp --get-url --get-thumbnail trả về: line 0 = media URL, line 1 = thumbnail URL
-    // Nếu chỉ có 1 line thì là ảnh tĩnh (thumbnail = media)
     const mediaURL = lines[0]
     const thumbnailURL = lines[1]
 
@@ -49,6 +46,16 @@ app.get('/download', (req, res) => {
       type: isImage ? 'image' : 'video'
     })
   })
+}
+
+app.get('/download', (req, res) => {
+  handleDownload(req.query.url, req.query.secret, res)
+})
+
+app.post('/download', (req, res) => {
+  const url = req.body?.url || req.query.url
+  const secret = req.body?.secret || req.query.secret
+  handleDownload(url, secret, res)
 })
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
