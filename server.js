@@ -13,7 +13,8 @@ app.get('/download', (req, res) => {
   if (secret !== API_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
-  if (!url || !url.includes('facebook.com')) {
+  const allowedDomains = ['facebook.com', 'instagram.com', 'fb.watch', 'fb.com']
+  if (!url || !allowedDomains.some(d => url.includes(d))) {
     return res.status(400).json({ error: 'Invalid URL' })
   }
 
