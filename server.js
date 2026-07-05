@@ -18,9 +18,10 @@ app.get('/download', (req, res) => {
     return res.status(400).json({ error: 'Invalid URL' })
   }
 
-  // yt-dlp: lấy direct URL, không download file về server
+  // yt-dlp: lấy direct URL + metadata
   execFile('yt-dlp', [
     '--get-url',
+    '--get-thumbnail',
     '--format', 'best[ext=mp4][vcodec^=avc]/best[ext=mp4]/best',
     '--no-playlist',
     url
@@ -31,13 +32,22 @@ app.get('/download', (req, res) => {
     }
 
     const lines = stdout.trim().split('\n').filter(Boolean)
-    const videoURL = lines[0]
 
-    if (!videoURL || !videoURL.startsWith('http')) {
-      return res.status(500).json({ error: 'No video URL found' })
+    // yt-dlp --get-url --get-thumbnail trả về: line 0 = media URL, line 1 = thumbnail URL
+    // Nếu chỉ có 1 line thì là ảnh tĩnh (thumbnail = media)
+    const mediaURL = lines[0]
+    const thumbnailURL = lines[1]
+
+    if (!mediaURL || !mediaURL.startsWith('http')) {
+      return res.status(500).json({ error: 'No URL found' })
     }
 
-    res.json({ url: videoURL })
+    const isImage = !mediaURL.includes('.mp4') && !mediaURL.includes('video')
+    res.json({
+      url: mediaURL,
+      thumbnail: thumbnailURL || null,
+      type: isImage ? 'image' : 'video'
+    })
   })
 })
 
