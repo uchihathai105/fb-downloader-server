@@ -1,5 +1,8 @@
 const express = require('express')
 const { execFile } = require('child_process')
+const { randomUUID } = require('crypto')
+const fs = require('fs')
+const path = require('path')
 const app = express()
 
 app.use(express.json())
@@ -14,35 +17,39 @@ function isAllowed(url) {
   return url && allowed.some(d => url.includes(d))
 }
 
-function handleDownload(url, secret, res) {
+function handleDownload(url, secret, req, res) {
   if (secret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' })
   if (!isAllowed(url)) return res.status(400).json({ error: 'Invalid URL' })
 
-  const fmt = [
-    'best[vcodec^=avc1][acodec^=mp4a][ext=mp4]',
-    'best[vcodec^=avc1][ext=mp4]',
-    'best[vcodec^=avc][ext=mp4]',
-    'best[ext=mp4]',
-    'best'
-  ].join('/')
+  const outPath = path.join('/tmp', `${randomUUID()}.mp4`)
 
+  // yt-dlp tải về file hoàn chỉnh (tự xử lý cookies/headers, merge video+audio)
   execFile('yt-dlp', [
-    '--get-url',
-    '--format', fmt,
+    '--format', 'bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/best[ext=mp4]/best',
+    '--merge-output-format', 'mp4',
     '--no-playlist',
     '--no-warnings',
+    '-o', outPath,
     url
-  ], { timeout: 30000 }, (err, stdout, stderr) => {
-    if (err) return res.status(500).json({ error: 'Failed', detail: stderr.slice(0, 300) })
+  ], { timeout: 60000 }, (err, _, stderr) => {
+    if (err) {
+      fs.unlink(outPath, () => {})
+      return res.status(500).json({ error: 'Download failed', detail: stderr.slice(0, 300) })
+    }
 
-    const lines = stdout.trim().split('\n').filter(l => l.startsWith('http'))
-    if (!lines.length) return res.status(500).json({ error: 'No URL found' })
+    const stat = fs.statSync(outPath)
+    res.setHeader('Content-Type', 'video/mp4')
+    res.setHeader('Content-Length', stat.size)
+    res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"')
 
-    res.json({ videoURL: lines[0], type: 'direct' })
+    const stream = fs.createReadStream(outPath)
+    stream.pipe(res)
+    stream.on('close', () => fs.unlink(outPath, () => {}))
+    req.on('close', () => { stream.destroy(); fs.unlink(outPath, () => {}) })
   })
 }
 
-app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, res))
-app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, res))
+app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, req, res))
+app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, req, res))
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
