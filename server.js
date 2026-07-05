@@ -1,8 +1,5 @@
 const express = require('express')
-const { spawn } = require('child_process')
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
+const { execFile } = require('child_process')
 const app = express()
 
 app.use(express.json())
@@ -17,57 +14,32 @@ function isAllowed(url) {
   return url && allowed.some(d => url.includes(d))
 }
 
-function handleDownload(url, secret, req, res) {
+function handleDownload(url, secret, res) {
   if (secret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' })
   if (!isAllowed(url)) return res.status(400).json({ error: 'Invalid URL' })
 
-  const tmpFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`)
-
-  // Download + transcode to H.264/AAC mp4 via yt-dlp | ffmpeg
-  const ytdlp = spawn('yt-dlp', [
-    '-o', '-',
-    '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+  execFile('yt-dlp', [
+    '--get-url',
+    '--format', 'bestvideo[vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]/best[vcodec^=avc][ext=mp4]/best[ext=mp4]/best',
     '--no-playlist',
-    '--quiet',
+    '--no-warnings',
     url
-  ])
+  ], { timeout: 30000 }, (err, stdout, stderr) => {
+    if (err) return res.status(500).json({ error: 'Failed', detail: stderr.slice(0, 300) })
 
-  const ffmpeg = spawn('ffmpeg', [
-    '-i', 'pipe:0',
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-    '-c:a', 'aac', '-b:a', '128k',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    'pipe:1'
-  ])
+    const lines = stdout.trim().split('\n').filter(l => l.startsWith('http'))
+    if (!lines.length) return res.status(500).json({ error: 'No URL found' })
 
-  ytdlp.stdout.pipe(ffmpeg.stdin)
-
-  res.setHeader('Content-Type', 'video/mp4')
-  res.setHeader('Transfer-Encoding', 'chunked')
-  ffmpeg.stdout.pipe(res)
-
-  let errMsg = ''
-  ytdlp.stderr.on('data', d => errMsg += d)
-  ffmpeg.stderr.on('data', () => {}) // suppress ffmpeg logs
-
-  ffmpeg.on('close', code => {
-    if (code !== 0 && !res.headersSent) {
-      res.status(500).json({ error: 'Transcode failed', detail: errMsg })
-    }
-  })
-
-  ytdlp.on('error', err => {
-    if (!res.headersSent) res.status(500).json({ error: err.message })
-  })
-
-  req?.on?.('close', () => {
-    ytdlp.kill()
-    ffmpeg.kill()
+    // Nếu có 2 URLs (video + audio riêng) → trả cả 2 để app ghép
+    res.json({
+      videoURL: lines[0],
+      audioURL: lines.length > 1 ? lines[1] : null,
+      type: 'video'
+    })
   })
 }
 
-app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, req, res))
-app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, req, res))
+app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, res))
+app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, res))
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
