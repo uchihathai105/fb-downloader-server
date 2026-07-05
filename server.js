@@ -1,5 +1,8 @@
 const express = require('express')
-const { execFile } = require('child_process')
+const { spawn } = require('child_process')
+const fs = require('fs')
+const path = require('path')
+const os = require('os')
 const app = express()
 
 app.use(express.json())
@@ -9,53 +12,62 @@ const API_SECRET = process.env.API_SECRET || 'changeme'
 
 app.get('/health', (_, res) => res.json({ ok: true }))
 
+function isAllowed(url) {
+  const allowed = ['facebook.com', 'instagram.com', 'fb.watch', 'fb.com', 'tiktok.com', 'vm.tiktok.com']
+  return url && allowed.some(d => url.includes(d))
+}
+
 function handleDownload(url, secret, res) {
-  if (secret !== API_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' })
-  }
+  if (secret !== API_SECRET) return res.status(401).json({ error: 'Unauthorized' })
+  if (!isAllowed(url)) return res.status(400).json({ error: 'Invalid URL' })
 
-  const allowedDomains = ['facebook.com', 'instagram.com', 'fb.watch', 'fb.com', 'tiktok.com', 'vm.tiktok.com']
-  if (!url || !allowedDomains.some(d => url.includes(d))) {
-    return res.status(400).json({ error: 'Invalid URL' })
-  }
+  const tmpFile = path.join(os.tmpdir(), `video_${Date.now()}.mp4`)
 
-  execFile('yt-dlp', [
-    '--get-url',
-    '--get-thumbnail',
-    '--format', 'best[ext=mp4][vcodec^=avc]/best[ext=mp4]/best',
+  // Download + transcode to H.264/AAC mp4 via yt-dlp | ffmpeg
+  const ytdlp = spawn('yt-dlp', [
+    '-o', '-',
+    '--format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
     '--no-playlist',
+    '--quiet',
     url
-  ], { timeout: 30000 }, (err, stdout, stderr) => {
-    if (err) {
-      console.error('yt-dlp error:', stderr)
-      return res.status(500).json({ error: 'Could not extract video', detail: stderr })
+  ])
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-i', 'pipe:0',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-c:a', 'aac', '-b:a', '128k',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4',
+    'pipe:1'
+  ])
+
+  ytdlp.stdout.pipe(ffmpeg.stdin)
+
+  res.setHeader('Content-Type', 'video/mp4')
+  res.setHeader('Transfer-Encoding', 'chunked')
+  ffmpeg.stdout.pipe(res)
+
+  let errMsg = ''
+  ytdlp.stderr.on('data', d => errMsg += d)
+  ffmpeg.stderr.on('data', () => {}) // suppress ffmpeg logs
+
+  ffmpeg.on('close', code => {
+    if (code !== 0 && !res.headersSent) {
+      res.status(500).json({ error: 'Transcode failed', detail: errMsg })
     }
+  })
 
-    const lines = stdout.trim().split('\n').filter(Boolean)
-    const mediaURL = lines[0]
-    const thumbnailURL = lines[1]
+  ytdlp.on('error', err => {
+    if (!res.headersSent) res.status(500).json({ error: err.message })
+  })
 
-    if (!mediaURL || !mediaURL.startsWith('http')) {
-      return res.status(500).json({ error: 'No URL found' })
-    }
-
-    const isImage = !mediaURL.includes('.mp4') && !mediaURL.includes('video')
-    res.json({
-      url: mediaURL,
-      thumbnail: thumbnailURL || null,
-      type: isImage ? 'image' : 'video'
-    })
+  req?.on?.('close', () => {
+    ytdlp.kill()
+    ffmpeg.kill()
   })
 }
 
-app.get('/download', (req, res) => {
-  handleDownload(req.query.url, req.query.secret, res)
-})
-
-app.post('/download', (req, res) => {
-  const url = req.body?.url || req.query.url
-  const secret = req.body?.secret || req.query.secret
-  handleDownload(url, secret, res)
-})
+app.get('/download', (req, res) => handleDownload(req.query.url, req.query.secret, res))
+app.post('/download', (req, res) => handleDownload(req.body?.url, req.body?.secret, res))
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
